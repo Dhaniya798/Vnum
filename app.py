@@ -1,58 +1,82 @@
-import telebot
-from flask import Flask, request
-import requests
+import json
 import os
+import requests
+from http.server import BaseHTTPRequestHandler
 
-# Replace with your Bot Token
-BOT_TOKEN = os.environ.get('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
-
-bot = telebot.TeleBot(8355016420:AAFnAheJgoKgvQiOQ0J6dGMoIHowVC3mpcU)
-app = Flask(__name__)
-
+# Telegram Bot Token (Vercel env var se le)
+TOKEN = os.environ.get('8355016420:AAFnAheJgoKgvQiOQ0J6dGMoIHowVC3mpcU')
 API_BASE = "https://encorexapi.vercel.app/vehicletest?vnum="
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.reply_to(message, "Vehicle details lookup bot. Send me a vehicle number like RJ07CC8989.")
+if not TOKEN:
+    raise ValueError("BOT_TOKEN not set in env vars")
 
-@bot.message_handler(func=lambda message: True)
-def handle_vehicle_number(message):
-    vnum = message.text.strip().upper()
-    try:
-        url = API_BASE + vnum
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()["data"]["data"]["data"][0]
-        
-        reply = f"Vehicle Details for {vnum}:\n\n"
-        reply += f"Owner Name: {data.get('owner_name', 'N/A')}\n"
-        reply += f"Father Name: {data.get('father_name', 'N/A')}\n"
-        reply += f"Mobile: {data.get('mobile_no', 'N/A')}\n"
-        reply += f"RTO: {data.get('rto', 'N/A')}\n"
-        reply += f"Manufacturer: {data.get('maker', 'N/A')}\n"
-        reply += f"Model: {data.get('vehicle_model', 'N/A')}\n"
-        reply += f"Fuel Type: {data.get('fuel_type', 'N/A')}\n"
-        reply += f"Reg Date: {data.get('regn_dt', 'N/A')}\n"
-        reply += f"Insurance Until: {data.get('ins_upto', 'N/A')}\n"
-        reply += f"PUC Until: {data.get('puc_upto', 'N/A')}\n"
-        reply += f"Blacklist: {data.get('blacklist_status', 'N/A')}\n"
-        
-        bot.reply_to(message, reply)
-    except Exception as e:
-        bot.reply_to(message, f"Error: {str(e)}. Check number or try later.")
+WEBHOOK_PATH = f"/{TOKEN}"  # Telegram webhook yahin pe hit karega
 
-@app.route('/' + BOT_TOKEN, methods=['POST'])
-def getMessage():
-    json_string = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_string)
-    bot.process_new_updates([update])
-    return "!", 200
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path == WEBHOOK_PATH:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length).decode('utf-8')
+            update = json.loads(post_data)
 
-@app.route('/')
-def webhook():
-    bot.remove_webhook()
-    bot.set_webhook(url=f"https://your-vercel-app-name.vercel.app/{BOT_TOKEN}")
-    return "Webhook set!", 200
+            # Simple message handling
+            if 'message' in update:
+                chat_id = update['message']['chat']['id']
+                text = update['message'].get('text', '').strip().upper()
 
+                if text == '/start':
+                    reply = "Vehicle lookup bot ready. Send vehicle number like RJ07CC8989"
+                elif len(text) >= 8 and text.isalnum():  # Rough vehicle number check
+                    try:
+                        url = API_BASE + text
+                        resp = requests.get(url, timeout=10).json()
+                        d = resp["data"]["data"]["data"][0]
+
+                        reply = f"Details for {text}:\n"
+                        reply += f"Owner: {d.get('owner_name', 'N/A')}\n"
+                        reply += f"Father: {d.get('father_name', 'N/A')}\n"
+                        reply += f"Mobile: {d.get('mobile_no', 'N/A')}\n"
+                        reply += f"Model: {d.get('vehicle_model', 'N/A')}\n"
+                        reply += f"Fuel: {d.get('fuel_type', 'N/A')}\n"
+                        reply += f"Reg Date: {d.get('regn_dt', 'N/A')}\n"
+                        reply += f"Insurance: {d.get('ins_upto', 'N/A')}\n"
+                    except Exception as e:
+                        reply = f"Error: {str(e)}. Try again or check number."
+                else:
+                    reply = "Send valid vehicle number."
+
+                # Send reply via Telegram API
+                send_url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+                payload = {"chat_id": chat_id, "text": reply}
+                requests.post(send_url, json=payload)
+
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+# Vercel expects this for serverless
+def handler_wrapper(environ, start_response):
+    # Simple adapter for Vercel (WSGI-like)
+    request = environ.get('REQUEST_METHOD', 'GET')
+    if request == 'POST':
+        # Simulate BaseHTTPRequestHandler for POST
+        handler_instance = handler()
+        handler_instance.path = environ['PATH_INFO']
+        handler_instance.headers = {k.lower(): v for k, v in environ.items() if k.startswith('HTTP_')}
+        # Call do_POST
+        handler_instance.do_POST()
+        start_response('200 OK', [('Content-type', 'text/plain')])
+        return [b"OK"]
+    else:
+        start_response('405 Method Not Allowed', [('Content-type', 'text/plain')])
+        return [b"Only POST allowed"]
+
+# For local testing (optional)
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    from wsgiref.simple_server import make_server
+    httpd = make_server('', 8000, handler_wrapper)
+    print("Local server on http://localhost:8000")
+    httpd.serve_forever()

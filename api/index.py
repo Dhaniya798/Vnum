@@ -1,16 +1,12 @@
 import json
-import os
 import requests
 from http.server import BaseHTTPRequestHandler
 
-# Telegram Bot Token (Vercel env var se le)
-TOKEN = os.environ.get('8355016420:AAFnAheJgoKgvQiOQ0J6dGMoIHowVC3mpcU')
+# Token yahin hardcode kar diya (sirf testing ke liye – production mein mat rakhna)
+TOKEN = "8355016420:AAFnAheJgoKgvQiOQ0J6dGMoIHowVC3mpcU"
 API_BASE = "https://encorexapi.vercel.app/vehicletest?vnum="
 
-if not TOKEN:
-    raise ValueError("BOT_TOKEN not set in env vars")
-
-WEBHOOK_PATH = f"/{TOKEN}"  # Telegram webhook yahin pe hit karega
+WEBHOOK_PATH = f"/{TOKEN}"  # Webhook path abhi bhi /tokenstring rahega
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -19,14 +15,13 @@ class handler(BaseHTTPRequestHandler):
             post_data = self.rfile.read(content_length).decode('utf-8')
             update = json.loads(post_data)
 
-            # Simple message handling
             if 'message' in update:
                 chat_id = update['message']['chat']['id']
                 text = update['message'].get('text', '').strip().upper()
 
                 if text == '/start':
                     reply = "Vehicle lookup bot ready. Send vehicle number like RJ07CC8989"
-                elif len(text) >= 8 and text.isalnum():  # Rough vehicle number check
+                elif len(text) >= 8 and text.isalnum():
                     try:
                         url = API_BASE + text
                         resp = requests.get(url, timeout=10).json()
@@ -45,7 +40,7 @@ class handler(BaseHTTPRequestHandler):
                 else:
                     reply = "Send valid vehicle number."
 
-                # Send reply via Telegram API
+                # Send reply
                 send_url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
                 payload = {"chat_id": chat_id, "text": reply}
                 requests.post(send_url, json=payload)
@@ -57,16 +52,13 @@ class handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-# Vercel expects this for serverless
+# Vercel wrapper (same rakh)
 def handler_wrapper(environ, start_response):
-    # Simple adapter for Vercel (WSGI-like)
     request = environ.get('REQUEST_METHOD', 'GET')
     if request == 'POST':
-        # Simulate BaseHTTPRequestHandler for POST
         handler_instance = handler()
         handler_instance.path = environ['PATH_INFO']
         handler_instance.headers = {k.lower(): v for k, v in environ.items() if k.startswith('HTTP_')}
-        # Call do_POST
         handler_instance.do_POST()
         start_response('200 OK', [('Content-type', 'text/plain')])
         return [b"OK"]
@@ -74,7 +66,6 @@ def handler_wrapper(environ, start_response):
         start_response('405 Method Not Allowed', [('Content-type', 'text/plain')])
         return [b"Only POST allowed"]
 
-# For local testing (optional)
 if __name__ == "__main__":
     from wsgiref.simple_server import make_server
     httpd = make_server('', 8000, handler_wrapper)

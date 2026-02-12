@@ -6,7 +6,7 @@ import os
 # Replace with your Bot Token
 BOT_TOKEN = os.environ.get('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
 
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(8355016420:AAFnAheJgoKgvQiOQ0J6dGMoIHowVC3mpcU)
 app = Flask(__name__)
 
 API_BASE = "https://encorexapi.vercel.app/vehicletest?vnum="

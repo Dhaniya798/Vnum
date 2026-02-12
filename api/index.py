@@ -1,17 +1,29 @@
 import json
+import os
 import requests
 from http.server import BaseHTTPRequestHandler
 
-# Token yahin hardcode kar diya (sirf testing ke liye – production mein mat rakhna)
 TOKEN = "8355016420:AAFnAheJgoKgvQiOQ0J6dGMoIHowVC3mpcU"
 API_BASE = "https://encorexapi.vercel.app/vehicletest?vnum="
 
-WEBHOOK_PATH = f"/{TOKEN}"  # Webhook path abhi bhi /tokenstring rahega
+WEBHOOK_PATH = f"/{TOKEN}"
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path == WEBHOOK_PATH:
-            content_length = int(self.headers['Content-Length'])
+        if self.path != WEBHOOK_PATH:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+            return
+
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length == 0:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Bad Request: No body")
+                return
+
             post_data = self.rfile.read(content_length).decode('utf-8')
             update = json.loads(post_data)
 
@@ -24,50 +36,46 @@ class handler(BaseHTTPRequestHandler):
                 elif len(text) >= 8 and text.isalnum():
                     try:
                         url = API_BASE + text
-                        resp = requests.get(url, timeout=10).json()
-                        d = resp["data"]["data"]["data"][0]
+                        resp = requests.get(url, timeout=10)
+                        resp.raise_for_status()  # Raise if not 200
+                        data = resp.json()
+                        d = data["data"]["data"]["data"][0]
 
-                        reply = f"Details for {text}:\n"
+                        reply = f"Details for {text}:\n\n"
                         reply += f"Owner: {d.get('owner_name', 'N/A')}\n"
                         reply += f"Father: {d.get('father_name', 'N/A')}\n"
                         reply += f"Mobile: {d.get('mobile_no', 'N/A')}\n"
                         reply += f"Model: {d.get('vehicle_model', 'N/A')}\n"
                         reply += f"Fuel: {d.get('fuel_type', 'N/A')}\n"
                         reply += f"Reg Date: {d.get('regn_dt', 'N/A')}\n"
-                        reply += f"Insurance: {d.get('ins_upto', 'N/A')}\n"
+                        reply += f"Insurance Until: {d.get('ins_upto', 'N/A')}\n"
+                    except requests.exceptions.RequestException as e:
+                        reply = f"API fetch failed: {str(e)}"
+                    except (KeyError, IndexError, json.JSONDecodeError) as e:
+                        reply = f"Data parse error: {str(e)}. Invalid response or vehicle not found."
                     except Exception as e:
-                        reply = f"Error: {str(e)}. Try again or check number."
+                        reply = f"Unexpected error: {str(e)}"
                 else:
-                    reply = "Send valid vehicle number."
+                    reply = "Invalid input. Send a valid vehicle number (min 8 chars, alphanumeric)."
 
-                # Send reply
+                # Send reply to Telegram
                 send_url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
                 payload = {"chat_id": chat_id, "text": reply}
-                requests.post(send_url, json=payload)
+                send_resp = requests.post(send_url, json=payload)
+                if not send_resp.ok:
+                    print(f"Telegram send failed: {send_resp.text}")  # For Vercel logs
 
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
-        else:
-            self.send_response(404)
+
+        except Exception as e:
+            print(f"Handler error: {str(e)}")  # Logs mein dikhega
+            self.send_response(500)
             self.end_headers()
+            self.wfile.write(f"Internal Error: {str(e)}".encode())
 
-# Vercel wrapper (same rakh)
-def handler_wrapper(environ, start_response):
-    request = environ.get('REQUEST_METHOD', 'GET')
-    if request == 'POST':
-        handler_instance = handler()
-        handler_instance.path = environ['PATH_INFO']
-        handler_instance.headers = {k.lower(): v for k, v in environ.items() if k.startswith('HTTP_')}
-        handler_instance.do_POST()
-        start_response('200 OK', [('Content-type', 'text/plain')])
-        return [b"OK"]
-    else:
-        start_response('405 Method Not Allowed', [('Content-type', 'text/plain')])
-        return [b"Only POST allowed"]
-
-if __name__ == "__main__":
-    from wsgiref.simple_server import make_server
-    httpd = make_server('', 8000, handler_wrapper)
-    print("Local server on http://localhost:8000")
-    httpd.serve_forever()
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Webhook endpoint ready. Use POST for Telegram updates.")
